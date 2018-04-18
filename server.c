@@ -1,99 +1,87 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
 #include <unistd.h>
-#include <pthread.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
-//used to deal with threading
-void *connection_handler(void *);
+#define PORT 8888
 
-int main(int argc, char *argv[]){
-	
-	//initialise all the required variables
-	int socket_desc, client_socket, client, read_size, *new_socket;
-	//structure to hold the server and client address
-	struct sockaddr_in server_addr, client_addr;
-	//store the client message --> testing purposes
-	char client_msg[2000];
+int main(){
 
-	//STEP 1 - create the socket
-	socket_desc = socket(AF_INET, SOCK_STREAM, 0);
-	//error checking
-	if(socket_desc == -1){
-		printf("Error creating socket\n");
-	}
-	puts("Socket Successfully created!\n");
-	
-	//STEP 2 - initialize the servers address structure
-	server_addr.sin_family = AF_INET;
-	server_addr.sin_addr.s_addr = INADDR_ANY;
-	server_addr.sin_port = htons(8888);
+  // 1 - Initialse the servers variables
+  int sock_desc, ret;
+  struct sockaddr_in server_addr;
+  int client_sock;
+  struct sockaddr_in client_addr;
+  socklen_t addr_size;
+  char buffer[500];
+  pid_t childpid;
 
-	//STEP - 3 Bind the socket
-	if(bind(socket_desc, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
-		perror("Socket binding failed!\n");
-		return 1;
-	}
-	puts("Socket Binding successful!\n");
+  // 2 - Create the socket
+  sock_desc = socket(AF_INET, SOCK_STREAM, 0);
+  if(sock_desc < 0){
+    printf("Error creating socket.\n");
+    exit(1);
+  }
+  printf("Server socket has been created.\n");
 
-	//STEP - 4 Init listing state
-	//backlog of up to five clients that can connect
-	listen(socket_desc, 5);
+  // 3 - Initialise the socket
+  //memset(&server_addr, '\0', sizeof(server_addr));
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(PORT);
+  server_addr.sin_addr.s_addr = INADDR_ANY;
 
-	//STEP - 5 Accept incoming connections from clients
-	puts("Awaiting client connections...\n");
-	client = sizeof(struct sockaddr_in);
+  // 4 - Bind the socket
+  if(bind(sock_desc, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0){
+    perror("Error binding server socket");
+    exit(1);
+  }
+  printf("Socket Binding to port %d successful\n", 8888);
 
-	//infinite while loop to accept connections from client
-	while( (client_socket = accept(socket_desc, (struct sockaddr *)&client_socket, (socklen_t*)&client))){
-		//A: create the thread for the new client
-		puts("Client Connection Accepted\n");
-		pthread_t c_thread;
-		new_socket = malloc(1);
-		*new_socket = client_socket;
+  // 5 - Listen for client connections
+  if(listen(sock_desc, 10) == 0){
+    printf("Waiting for client connections...\n");
+  }else{
+    printf("[-]Error in binding.\n");
+  }
 
-		if(pthread_create(&c_thread, NULL, connection_handler, (void*)new_socket) < 0){
-			perror("Thread creation error\n");
-			return 1;
-		}
-		puts("Connection Handler Assigned to Thread\n");
-	}
+  //infinite loop to continuously listen for connections
+  while(1){
+    // 6 - Accept a clients connection
+    client_sock = accept(sock_desc, (struct sockaddr*)&client_addr, &addr_size);
+    if(client_sock < 0){
+      exit(1);
+    }
+    // print client details using inet_ntoa() and inet_ntohs() - converts from network byte order to string
+    printf("Connection accepted from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-	//error checking for new client socket
-	if(client_socket < 0){
-		perror("Could not accept client\n");
-		return 1;
-	}
+    //create a new process for the client using fork()
+    if((childpid = fork()) == 0){
+      close(sock_desc);
 
-	return 0;
-}//end main
+      //infinite loop to deal with client
+      //for testing simply prints the clients message
+      //exits when "exit" specified 
+      while(1){
+        recv(client_sock, buffer, 500, 0);
+        if(strcmp(buffer, "exit") == 0){
+          printf("Disconnected from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+          break;
+        }else{
+          printf("Client: %s\n", buffer);
+          send(client_sock, buffer, strlen(buffer), 0);
+          bzero(buffer, sizeof(buffer));
+        }
+      }
+    }
 
-//Connection handler for each of the clients
-void *connection_handler(void *socket_desc){
-	//get the descriptor of the socket param
-	int socket = *(int*)socket_desc;
-	int read_size;
-	char *msg, client_msg[2000];
+  }
 
-	//send a message to the connected client
-	msg = "This is a test\n";
-	write(socket, msg, strlen(msg));
+  close(client_sock);
 
-	//read in a message from the client
-	while((read_size = recv(socket, client_msg, 2000, 0)) > 0){
-		write(socket, client_msg, strlen(client_msg));
-	}
 
-	if(read_size == 0){
-		puts("Client has disconnected\n");
-		fflush(stdout);
-	}else if(read_size == -1){
-		perror("Could not read client message\n");
-	}
-
-	//free the pointer for the socket
-	free(socket_desc);
-	return 0;
+  return 0;
 }
