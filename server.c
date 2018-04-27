@@ -7,7 +7,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #define BUFFSIZE 1024
-#define PORT 8888
+#define PORT 8000
 
 //declare global variables
 int sock_desc, ret;
@@ -17,11 +17,14 @@ struct sockaddr_in client_addr;
 socklen_t addr_size;
 char buffer[BUFFSIZE];
 pid_t childpid;
+char *login;
 
+int authenticateUser(char *login);
 void recieveClientFile(int client_sock);
 
 int main(){
 
+  int authResult = 0;
   // 2 - Create the socket
   sock_desc = socket(AF_INET, SOCK_STREAM, 0);
   if(sock_desc < 0){
@@ -69,25 +72,29 @@ int main(){
       //for testing simply prints the clients message
       //exits when "exit" specified 
       while(1){
-        memset(buffer, 0, BUFFSIZE);
-        recv(client_sock, buffer, BUFFSIZE, 0);
-        
-        if(strcmp(buffer, "exit") == 0){
-          printf("%s\n", buffer);
-          printf("Disconnected from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-          break;
-        } 
-        else if(strcmp(buffer, "password") == 0){
-          //password auth was successful, recieve data from client
-          printf("Client: %s\n", buffer);
-          write(client_sock, "Password Accepted", strlen("Password Accepted"));
+
+          printf("authenticaing user\n");
+          //read in the username
           memset(buffer, 0, BUFFSIZE);
-          recieveClientFile(client_sock);
-        }else{
-          printf("%s\n", buffer);
-          write(client_sock, "incorrect password", strlen("incorrect password"));
-          memset(buffer, 0, BUFFSIZE);
-        }
+          recv(client_sock, buffer, BUFFSIZE, 0);
+          login = &buffer[0];
+          printf("login: %s\n", login);
+
+          //AUTH USER
+          authResult = authenticateUser(login);
+          
+          //authenticate the user
+          if( authResult == 0){
+            printf("Unsuccessful login\n");
+            send(client_sock, "unsuccessful", strlen("unsuccessful"), 0);
+            exit(1);
+          }else{
+            send(client_sock, "successful", strlen("successful"), 0);
+            //proceed with the file transfer
+            recieveClientFile(client_sock);
+            printf("File transfered successfully\n");
+            exit(1);
+          }
 
       }//end while
 
@@ -105,11 +112,21 @@ int main(){
 void recieveClientFile(int client_sock){
   
   char file_buffer[512];
-  char* file_name = "serverFiles/index.html";
+  char* file_path = "";
 
-  FILE *file_open = fopen(file_name, "w");
+  //read in the destination
+  memset(buffer, 0, BUFFSIZE);
+  if(recv(client_sock, buffer, BUFFSIZE, 0) < 0){
+    //destination read error
+    printf("destination of file cannot be read\n");
+  }
+  printf("file destination: %s\n", buffer);
+
+  file_path = buffer;
+
+  FILE *file_open = fopen(file_path, "w");
   if(file_open == NULL){
-    printf("File %s cannot be opened on server\n", file_name);
+    printf("File %s cannot be opened on server\n", file_path);
   }
   else{
     
@@ -126,4 +143,26 @@ void recieveClientFile(int client_sock){
   }
   printf("Transfer completed successfully\n");
   fclose(file_open);
+}
+
+//function that authenitcates a username and password
+int authenticateUser(char *login){
+
+  char del[2] = ",";
+  char *userDetails;
+
+  char line[128];
+  FILE *file = fopen("users.txt", "r");
+
+  if(file){
+    while(fgets(line, sizeof(line), file)){
+      /* get the first token */
+      userDetails = strtok(line, del);
+      if(strcmp(userDetails, login) == 0){
+        return 1;
+      }
+    }
+    fclose(file);
+    return 0;
+  }
 }

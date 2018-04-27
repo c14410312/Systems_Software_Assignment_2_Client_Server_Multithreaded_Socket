@@ -6,32 +6,38 @@
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 
-#define PORT 8888
+#define PORT 8000
 #define BUFFSIZE 1024
 
 //global variables - client/server
 int client_sock;
 struct sockaddr_in server_addr;
 char buffer[BUFFSIZE];
+pthread_mutex_t file_lock;
 
-void fileTransfer(char* fpath);
+void fileTransfer(char* fpath, char* dpath);
 
 int main(int argc, char *argv[]){
-	int isAuth = 0;
-	char *filePath = argv[1];//read in the file name
+	char *authDetails = argv[1];//read in the user auth info
+	char *filePath = argv[2];//read in the file name
+	char *destPath = argv[3]; //read in the destination on the server
+	pthread_mutex_init(&file_lock, NULL); //init the lock 
 
 	//read in file from command line
 	if(argc == 1){
 		printf("Error, file name required as an argument...\n");
 		exit(1);
 	}
-	else if(argc > 2){
+	else if(argc > 4){
 		printf("Error, 1 argument required, detected 2...\n");
 		exit(1);
 	}
 	else{
+		printf("%s\n", authDetails);
 		printf("%s\n", filePath);
+		printf("%s\n", destPath);
 	}
 	
 
@@ -64,42 +70,50 @@ int main(int argc, char *argv[]){
 		memset(buffer, 0, BUFFSIZE);
 		
 		//1-create an authentication function
-		printf("Enter Password: ");
-		scanf("%s", &buffer[0]);
-		send(client_sock, buffer, strlen(buffer), 0);
+		printf("Authenticating User ...\n");
+		send(client_sock, authDetails, strlen(authDetails), 0);
 
-		if(strcmp(buffer, "exit") == 0){
-			close(client_sock);
-			printf("Disconnected from server\n");
-			exit(1);
-		}
-		//read data from server
+		memset(buffer, 0, BUFFSIZE);
 		if(recv(client_sock, buffer, BUFFSIZE, 0) < 0){
 			perror("Error reading server data");
 		}else{
 			//if the password is correct, authenticate
-			if(strcmp(buffer, "Password Accepted") == 0){
+			if(strcmp(buffer, "successful") == 0){
 				//run the file transer
-				fileTransfer(filePath);
+				fileTransfer(filePath, destPath);
 				printf("file %s transfered to server\n", filePath);
 				exit(1);
 			}
 			else{
-				printf("Incorrect Password. Try Again.\n");
+				printf("Incorrect login. Try Again.\n");
+				exit(1);
 			}
 		}
+		//printf("Authentication successful\n");
+		//run the file transer
+		//fileTransfer(filePath, destPath);
+		//printf("file %s transfered to server\n", filePath);
+		//exit(1);
 	}
 
 	return 0;
 }
 
 //function to deal with transfering the file
-void fileTransfer(char* fpath){
+void fileTransfer(char* fpath, char* dpath){
 
 	char* filePath = fpath;
+	char* destPath = dpath;
 	char fileBuffer[512];
-	
+
 	printf("Sending %s to the server", filePath);
+	//first send the file path
+	if(send(client_sock, destPath, strlen(destPath), 0) < 0){
+		printf("Could not send destination path to server\n");
+	}
+
+	//lock the process of transfering the file
+	pthread_mutex_lock(&file_lock);
 	FILE *file_open = fopen(filePath, "r");
 	bzero(fileBuffer, 512);
 	int blockSize,  i=0;
@@ -113,4 +127,6 @@ void fileTransfer(char* fpath){
 		bzero(fileBuffer, 512);
 		i++;
 	}
+	//unlock the write file process
+	pthread_mutex_unlock(&file_lock);
 }
